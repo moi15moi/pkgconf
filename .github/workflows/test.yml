@@ -401,6 +401,36 @@ jobs:
         run: |
           make distcheck
 
+  ubuntu-14-04:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:14.04
+    steps:
+      - name: Update system and add dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential git
+
+      - name: Install muon
+        run: |
+          git clone https://github.com/muon-build/muon.git /tmp/muon
+          cd /tmp/muon
+          ./bootstrap.sh build
+          build/muon-bootstrap setup -Dmeson-docs=disabled build
+          build/muon-bootstrap -C build samu
+          build/muon -C build install
+
+      - name: Checkout
+        run: |
+          git clone "${{ github.server_url }}/${{ github.repository }}" .
+          git checkout "${{ github.sha }}"
+
+      - name: Configure with muon + build
+        run: muon build builddir
+
+      - name: Run tests
+        run: muon -C builddir test -v -v
+
   analysis:
     runs-on: ubuntu-latest
     container:
