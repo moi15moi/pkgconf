@@ -435,22 +435,19 @@ jobs:
           # Only 64-bit packages — avoids i386/x86_64 multilib conflicts
           echo "exclude=*.i?86" >> /etc/yum.conf
 
-      - name: Install toolchain
-        run: yum install -y --nogpgcheck gcc git make curl
+      - name: Checkout your repo (on host)
+        uses: actions/checkout@v4
+        with:
+          path: project
 
-      - name: Install muon
+      - name: Clone muon (on host)
         run: |
-          curl -L http://github.com/muon-build/muon/archive/refs/heads/master.tar.gz
-          cd /tmp/muon
-          ./bootstrap.sh build
-          build/muon-bootstrap setup -Dmeson-docs=disabled build
-          build/muon-bootstrap -C build samu
-          build/muon -C build install
+          git clone https://github.com/muon-build/muon.git muon
 
-      - name: Checkout
+      - name: Build inside CentOS 5.11
         run: |
-          git clone "${{ github.server_url }}/${{ github.repository }}" .
-          git checkout "${{ github.sha }}"
+          docker run --rm -v "$PWD":/work -w /work \
+            centos:5.11 /bin/bash /work/project/ci/centos5-build.sh
 
       - name: Configure with muon + build
         run: muon build builddir
