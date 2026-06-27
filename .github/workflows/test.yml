@@ -434,7 +434,7 @@ jobs:
           echo "http_caching=none" >> /etc/yum.conf
 
       - name: Install toolchain
-        run: yum install -y --nogpgcheck gcc git make
+        run: yum install -y --nogpgcheck gcc git make curl
 
       - name: Install muon
         run: |
