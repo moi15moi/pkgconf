@@ -428,9 +428,13 @@ jobs:
           gpgcheck=0
           enabled=1
           EOF
+          # Force timeouts so a stalled mirror errors instead of hanging forever
+          echo "timeout=30" >> /etc/yum.conf
+          echo "retries=2"  >> /etc/yum.conf
+          echo "http_caching=none" >> /etc/yum.conf
 
-      - name: Install dependencies
-        run: yum install -y gcc git
+      - name: Install toolchain
+        run: yum install -y --nogpgcheck gcc git make
 
       - name: Install muon
         run: |
