@@ -406,8 +406,9 @@ jobs:
     container:
       image: centos:5.11
     steps:
-      - name: Disable fastestmirror
-        run: sed -i 's/enabled=1/enabled=0/g' /etc/yum/plugins/fastestmirror.conf
+      - name: Remove fastestmirror plugin
+        run: |
+          rm -f /etc/yum/plugins/fastestmirror.conf /usr/lib/yum-plugins/fastestmirror.py* 2>/dev/null || true
 
       - name: Fix CentOS 5 repositories
         run: |
