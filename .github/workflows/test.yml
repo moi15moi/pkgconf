@@ -438,7 +438,7 @@ jobs:
 
       - name: Install muon
         run: |
-          git clone https://github.com/muon-build/muon.git /tmp/muon
+          curl -L http://github.com/muon-build/muon/archive/refs/heads/master.tar.gz
           cd /tmp/muon
           ./bootstrap.sh build
           build/muon-bootstrap setup -Dmeson-docs=disabled build
