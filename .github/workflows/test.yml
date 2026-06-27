@@ -432,6 +432,8 @@ jobs:
           echo "timeout=30" >> /etc/yum.conf
           echo "retries=2"  >> /etc/yum.conf
           echo "http_caching=none" >> /etc/yum.conf
+          # Only 64-bit packages — avoids i386/x86_64 multilib conflicts
+          echo "exclude=*.i?86" >> /etc/yum.conf
 
       - name: Install toolchain
         run: yum install -y --nogpgcheck gcc git make curl
