@@ -411,7 +411,7 @@ jobs:
 
       - name: Clone muon (on host)
         run: |
-          git clone https://github.com/muon-build/muon.git muon
+          git clone https://github.com/moi15moi/muon.git muon
 
       - name: Build inside CentOS 5.11
         run: |
