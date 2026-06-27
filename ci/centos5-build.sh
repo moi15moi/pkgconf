@@ -41,5 +41,6 @@ build/muon-bootstrap -C build samu
 build/muon -C build install
 
 # --- build your project (checked out at /work/project) ---
+cd /work/project
 muon build builddir
 muon -C builddir test -v -v
