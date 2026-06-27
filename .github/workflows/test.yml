@@ -406,24 +406,27 @@ jobs:
     container:
       image: centos:5.11
     steps:
-      - name: Setup CentOS 5 Vault repos
+      - name: Point yum at the CERN HTTP vault mirror
         run: |
           rm -f /etc/yum.repos.d/*
           cat > /etc/yum.repos.d/CentOS-Vault.repo << 'EOF'
           [base]
-          name=CentOS-5 - Base
-          baseurl=http://vault.centos.org/5.11/os/$basearch/
+          name=CentOS-5.11 - Base
+          baseurl=http://linuxsoft.cern.ch/centos-vault/5.11/os/$basearch/
           gpgcheck=0
-          
+          enabled=1
+
           [updates]
-          name=CentOS-5 - Updates
-          baseurl=http://vault.centos.org/5.11/updates/$basearch/
+          name=CentOS-5.11 - Updates
+          baseurl=http://linuxsoft.cern.ch/centos-vault/5.11/updates/$basearch/
           gpgcheck=0
-          
+          enabled=1
+
           [extras]
-          name=CentOS-5 - Extras
-          baseurl=http://vault.centos.org/5.11/extras/$basearch/
+          name=CentOS-5.11 - Extras
+          baseurl=http://linuxsoft.cern.ch/centos-vault/5.11/extras/$basearch/
           gpgcheck=0
+          enabled=1
           EOF
 
       - name: Install dependencies
