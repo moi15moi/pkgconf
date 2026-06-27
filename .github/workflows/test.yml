@@ -406,9 +406,13 @@ jobs:
     container:
       image: centos:5.11
     steps:
-      - name: Update system and add dependencies
+      - name: Fix CentOS 5 repositories
         run: |
-          gcc --version
+          sed -i 's/^mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/*.repo
+          sed -i 's/^#baseurl=http:\/\/mirror.centos.org/baseurl=http:\/\/vault.centos.org/g' /etc/yum.repos.d/*.repo
+
+      - name: Install dependencies
+        run: yum install -y gcc git
 
       - name: Install muon
         run: |
