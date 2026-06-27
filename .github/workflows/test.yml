@@ -406,11 +406,13 @@ jobs:
     container:
       image: centos:5.11
     steps:
-      - name: Fix CentOS 5 repositories for HTTP
+      - name: Disable fastestmirror
+        run: sed -i 's/enabled=1/enabled=0/g' /etc/yum/plugins/fastestmirror.conf
+
+      - name: Fix CentOS 5 repositories
         run: |
           sed -i 's/^mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/*.repo
           sed -i 's/^#baseurl=http:\/\/mirror.centos.org/baseurl=http:\/\/vault.centos.org/g' /etc/yum.repos.d/*.repo
-          sed -i 's/https:\/\/vault.centos.org/http:\/\/vault.centos.org/g' /etc/yum.repos.d/*.repo
 
       - name: Install dependencies
         run: yum install -y gcc git
