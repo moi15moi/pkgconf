@@ -406,14 +406,25 @@ jobs:
     container:
       image: centos:5.11
     steps:
-      - name: Remove fastestmirror plugin
+      - name: Setup CentOS 5 Vault repos
         run: |
-          rm -f /etc/yum/plugins/fastestmirror.conf /usr/lib/yum-plugins/fastestmirror.py* 2>/dev/null || true
-
-      - name: Fix CentOS 5 repositories
-        run: |
-          sed -i 's/^mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/*.repo
-          sed -i 's/^#baseurl=http:\/\/mirror.centos.org/baseurl=http:\/\/vault.centos.org/g' /etc/yum.repos.d/*.repo
+          rm -f /etc/yum.repos.d/*
+          cat > /etc/yum.repos.d/CentOS-Vault.repo << 'EOF'
+          [base]
+          name=CentOS-5 - Base
+          baseurl=http://vault.centos.org/5.11/os/$basearch/
+          gpgcheck=0
+          
+          [updates]
+          name=CentOS-5 - Updates
+          baseurl=http://vault.centos.org/5.11/updates/$basearch/
+          gpgcheck=0
+          
+          [extras]
+          name=CentOS-5 - Extras
+          baseurl=http://vault.centos.org/5.11/extras/$basearch/
+          gpgcheck=0
+          EOF
 
       - name: Install dependencies
         run: yum install -y gcc git
