@@ -403,8 +403,6 @@ jobs:
 
   ubuntu-14-04:
     runs-on: ubuntu-latest
-    container:
-      image: centos:5.11
     steps:
       - name: Point yum at the CERN HTTP vault mirror
         run: |
