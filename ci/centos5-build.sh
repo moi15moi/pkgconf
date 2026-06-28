@@ -13,14 +13,15 @@ EOF
 apt-get update || true
 apt-get install -y --force-yes gcc
 
-# --- build muon (already cloned on host into /work/muon) ---
+# Build muon
 cd /work/muon
+# To know why "-lrt" is needed, see: https://github.com/muon-build/muon/issues/268
 LDFLAGS="-lrt" ./bootstrap.sh build
 LDFLAGS="-lrt" build/muon-bootstrap setup -Dmeson-docs=disabled build
 build/muon-bootstrap -C build samu
 build/muon -C build install
 
-# --- build your project (checked out at /work/project) ---
+# Build pkgconf + run tests
 cd /work/pkgconf
 muon build builddir
 muon -C builddir test -v -v
