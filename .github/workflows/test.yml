@@ -418,7 +418,7 @@ jobs:
       - name: Build inside Debian 7
         run: |
           docker run --rm -v "$PWD":/work -w /work \
-            debian:7 /bin/bash /work/project/ci/centos5-build.sh
+            debian:7 /bin/bash /work/pkgconf/ci/centos5-build.sh
 
   analysis:
     runs-on: ubuntu-latest
