@@ -8,7 +8,7 @@ deb http://archive.debian.org/debian-security wheezy/updates main
 EOF
 
 apt-get update || true
-apt-get install -y gcc
+apt-get install -y --force-yes gcc
 
 # --- build muon (already cloned on host into /work/muon) ---
 cd /work/muon
