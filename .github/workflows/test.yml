@@ -422,13 +422,13 @@ jobs:
           set -e
 
           # See: https://www.howtoforge.com/using-old-debian-versions-in-your-sources.list
-          cat > /etc/apt/sources.list << 'SOURCES'
+          cat > /etc/apt/sources.list << EOF
           deb http://archive.debian.org/debian/ wheezy main non-free contrib
           deb-src http://archive.debian.org/debian/ wheezy main non-free contrib
 
           deb http://archive.debian.org/debian-security/ wheezy/updates main non-free contrib
           deb-src http://archive.debian.org/debian-security/ wheezy/updates main non-free contrib
-          SOURCES
+          EOF
 
           # Install gcc
           apt-get update || true
