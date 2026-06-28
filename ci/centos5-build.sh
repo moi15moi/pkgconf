@@ -7,7 +7,7 @@ deb http://archive.debian.org/debian wheezy-lts main
 deb http://archive.debian.org/debian-security wheezy/updates main
 EOF
 
-apt-get update
+apt-get update || true
 apt-get install -y gcc
 
 # --- build muon (already cloned on host into /work/muon) ---
