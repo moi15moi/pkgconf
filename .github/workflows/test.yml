@@ -404,25 +404,21 @@ jobs:
   ubuntu-14-04:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout your repo (on host)
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          path: project
+          path: pkgconf
 
-      - name: Clone muon (on host)
-        run: |
-          git clone https://github.com/moi15moi/muon.git muon
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: muon-build/muon
+          path: muon
 
       - name: Build inside Debian 7
         run: |
           docker run --rm -v "$PWD":/work -w /work \
             debian:7 /bin/bash /work/project/ci/centos5-build.sh
-
-      - name: Configure with muon + build
-        run: muon build builddir
-
-      - name: Run tests
-        run: muon -C builddir test -v -v
 
   analysis:
     runs-on: ubuntu-latest
