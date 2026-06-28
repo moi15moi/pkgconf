@@ -1,9 +1,13 @@
 #!/bin/bash
 set -e
 
+# See: https://www.howtoforge.com/using-old-debian-versions-in-your-sources.list
 cat > /etc/apt/sources.list << EOF
-deb http://archive.debian.org/debian wheezy contrib main non-free
-deb http://archive.debian.org/debian-security wheezy/updates contrib main non-free
+deb http://archive.debian.org/debian/ wheezy main non-free contrib
+deb-src http://archive.debian.org/debian/ wheezy main non-free contrib
+
+deb http://archive.debian.org/debian-security/ wheezy/updates main non-free contrib
+deb-src http://archive.debian.org/debian-security/ wheezy/updates main non-free contrib
 EOF
 
 apt-get update || true
