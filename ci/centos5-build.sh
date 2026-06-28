@@ -2,9 +2,8 @@
 set -e
 
 cat > /etc/apt/sources.list << EOF
-deb http://archive.debian.org/debian wheezy main
-deb http://archive.debian.org/debian wheezy-lts main
-deb http://archive.debian.org/debian-security wheezy/updates main
+deb http://archive.debian.org/debian wheezy contrib main non-free
+deb http://archive.debian.org/debian-security wheezy/updates contrib main non-free
 EOF
 
 apt-get update || true
