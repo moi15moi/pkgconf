@@ -413,10 +413,10 @@ jobs:
         run: |
           git clone https://github.com/moi15moi/muon.git muon
 
-      - name: Build inside CentOS 5.11
+      - name: Build inside Debian 7
         run: |
           docker run --rm -v "$PWD":/work -w /work \
-            centos:5.11 /bin/bash /work/project/ci/centos5-build.sh
+            debian:7 /bin/bash /work/project/ci/centos5-build.sh
 
       - name: Configure with muon + build
         run: muon build builddir
