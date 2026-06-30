@@ -293,7 +293,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup _build -Db_sanitize=${{ matrix.sanitizer }} -Dwerror=true
+          CC=clang meson setup _build -Db_sanitize=${{ matrix.sanitizer }} -Dwerror=true
           meson compile -C _build
 
       - name: Run tests
