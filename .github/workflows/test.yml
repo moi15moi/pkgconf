@@ -289,11 +289,11 @@ jobs:
       - name: Update system and add dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential meson clang libclang-rt-dev
+          apt-get install -y build-essential meson clang lld libclang-rt-dev
 
       - name: Build
         run: |
-          CC=clang meson setup _build -Db_sanitize=${{ matrix.sanitizer }} -Dwerror=true
+          CC=clang CC_LD=lld meson setup _build -Db_sanitize=${{ matrix.sanitizer }} -Dwerror=true
           meson compile -C _build
 
       - name: Run tests
