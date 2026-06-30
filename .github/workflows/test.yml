@@ -275,10 +275,13 @@ jobs:
         run: |
           meson test -v -C _build
 
-  debian-meson-asan:
+  debian-meson-sanitizers:
     runs-on: ubuntu-latest
     container:
       image: debian:testing
+    strategy:
+      matrix:
+        sanitizer: [address, memory]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -290,7 +293,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup _build -Db_sanitize=address -Dwerror=true
+          meson setup _build -Db_sanitize=${{ matrix.sanitizer }} -Dwerror=true
           meson compile -C _build
 
       - name: Run tests
@@ -298,6 +301,7 @@ jobs:
           meson test -v -C _build
         env:
           ASAN_OPTIONS: "exitcode=7"
+          MSAN_OPTIONS: "exitcode=7"
 
   debian-autotools:
     runs-on: ubuntu-latest
