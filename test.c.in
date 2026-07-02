@@ -1,0 +1,7 @@
+@HEADER_INCLUDES@
+
+int
+main(void)
+{
+	return 0;
+}

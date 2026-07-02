@@ -440,6 +440,28 @@ foreach t : test_suites
     depends : [pkgconf_exe, spdxtool_exe, bomtool_exe, pccritic_exe])
 endforeach
 
+# Test that the headers are indeed compatible with c99
+header_includes = ''
+foreach h : headers
+  header_includes += '#include <libpkgconf/@0@>\n'.format(h)
+endforeach
+
+test_c_conf = configuration_data()
+test_c_conf.set('HEADER_INCLUDES', header_includes)
+test_c = configure_file(
+    input : 'test.c.in',
+    output : 'test.c',
+    configuration : test_c_conf,
+)
+
+c99_header = executable(
+    'c99_header',
+    test_c,
+    dependencies : dep_libpkgconf,
+    override_options : {'c_std' : 'c99', 'werror' : true, 'warning_level' : '3'},
+)
+test('c99_header', c99_header)
+
 install_man('man/bomtool.1')
 install_man('man/pkgconf.1')
 install_man('man/pkg.m4.7')
