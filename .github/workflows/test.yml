@@ -273,6 +273,26 @@ jobs:
         run: |
           meson test -v -C _build
 
+  s390x:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and test on s390x
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: s390x
+          distro: bookworm
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y build-essential meson
+          run: |
+            meson setup _build -Dwerror=true
+            meson compile -C _build
+            meson test -v -C _build
+
   debian-meson-asan:
     runs-on: ubuntu-latest
     container:
