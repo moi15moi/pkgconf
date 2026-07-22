@@ -325,50 +325,21 @@ fragment_is_unquoted_var(const char *value)
 }
 
 /*
- * !doc
- *
- * .. c:function:: bool pkgconf_fragment_add(const pkgconf_client_t *client, pkgconf_list_t *list, const char *string, unsigned int flags)
- *
- *    Adds a `fragment` of text to a `fragment list`, possibly modifying the fragment if a sysroot is set.
- *
- *    :param pkgconf_client_t* client: The pkgconf client being accessed.
- *    :param pkgconf_list_t* list: The fragment list.
- *    :param char* string: The string of text to add as a fragment to the fragment list.
- *    :param uint flags: Parsing-related flags for the package.
- *    :return: true on success, false on parse error or allocation failure
+ * Insert an already-expanded fragment string into the list.  No variable
+ * substitution is performed here: `string` is taken verbatim, so this must
+ * only be called with input that has already been through the bytecode
+ * evaluator.  `saw_sysroot` records whether that prior evaluation expanded
+ * ${pc_sysrootdir}, which governs whether sysroot injection is still needed.
  */
-bool
-pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_list_t *vars, const char *value, unsigned int flags)
+static bool
+fragment_insert_evaluated(pkgconf_client_t *client, pkgconf_list_t *list, const char *string, bool saw_sysroot, unsigned int flags)
 {
 	pkgconf_list_t *target = list;
 	pkgconf_fragment_t *terminate_parent = NULL;
 	pkgconf_fragment_t *frag;
-	pkgconf_buffer_t evalbuf = PKGCONF_BUFFER_INITIALIZER;
-	bool saw_sysroot = false;
-	char *string;
 
-	if (!pkgconf_bytecode_eval_str_to_buf(client, vars, value, &saw_sysroot, &evalbuf))
-	{
-		pkgconf_buffer_finalize(&evalbuf);
-		return false;
-	}
-
-	if (pkgconf_buffer_len(&evalbuf) == 0)
-	{
-		pkgconf_buffer_finalize(&evalbuf);
+	if (string == NULL || *string == '\0')
 		return true;
-	}
-
-	string = pkgconf_buffer_freeze(&evalbuf);
-	if (string == NULL)
-		return false;
-
-	if (fragment_is_unquoted_var(value))
-	{
-		bool ret = pkgconf_fragment_parse(client, list, vars, string, flags);
-		free(string);
-		return ret;
-	}
 
 	if (list->tail != NULL && list->tail->data != NULL &&
 		!(client->flags & PKGCONF_PKG_PKGF_DONT_MERGE_SPECIAL_FRAGMENTS))
@@ -394,7 +365,6 @@ pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_lis
 	if (frag == NULL)
 	{
 		PKGCONF_TRACE(client, "failed to add new fragment due to allocation failure to list @%p", target);
-		free(string);
 		return false;
 	}
 
@@ -411,7 +381,6 @@ pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_lis
 			{
 				pkgconf_buffer_finalize(&sysroot_buf);
 				free(frag);
-				free(string);
 				return false;
 			}
 
@@ -422,41 +391,26 @@ pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_lis
 	}
 	else
 	{
-		if (client->sysroot_dir != NULL && list->tail != NULL && list->tail->data != NULL)
-		{
-			pkgconf_fragment_t *last = list->tail->data;
-
-			if (should_inject_sysroot_child(client, last, string, saw_sysroot, flags))
-			{
-				pkgconf_buffer_t sysroot_buf = PKGCONF_BUFFER_INITIALIZER;
-
-				if (!pkgconf_buffer_append(&sysroot_buf, client->sysroot_dir) ||
-					!pkgconf_buffer_append(&sysroot_buf, string))
-				{
-					pkgconf_buffer_finalize(&sysroot_buf);
-					free(frag);
-					free(string);
-					return false;
-				}
-
-				free(string);
-				string = pkgconf_buffer_freeze(&sysroot_buf);
-				if (string == NULL)
-				{
-					free(frag);
-					return false;
-				}
-			}
-		}
-
 		frag->type = 0;
-		frag->data = strdup(string);
+
+		if (client->sysroot_dir != NULL && list->tail != NULL && list->tail->data != NULL &&
+			should_inject_sysroot_child(client, list->tail->data, string, saw_sysroot, flags))
+		{
+			pkgconf_buffer_t sysroot_buf = PKGCONF_BUFFER_INITIALIZER;
+
+			if (pkgconf_buffer_append(&sysroot_buf, client->sysroot_dir) &&
+				pkgconf_buffer_append(&sysroot_buf, string))
+				frag->data = pkgconf_buffer_freeze(&sysroot_buf);
+			else
+				pkgconf_buffer_finalize(&sysroot_buf);
+		}
+		else
+			frag->data = strdup(string);
 	}
 
 	if (frag->data == NULL)
 	{
 		free(frag);
-		free(string);
 		return false;
 	}
 
@@ -469,8 +423,134 @@ pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_lis
 	if (terminate_parent != NULL)
 		terminate_parent->flags |= PKGCONF_PKG_FRAGF_TERMINATED;
 
-	free(string);
 	return true;
+}
+
+/*
+ * Split a string into whitespace-delimited fragments, honouring shell quoting
+ * and greedy flags (e.g. "-I /usr/include" -> "-I/usr/include").
+ *
+ * When `evaluate` is true, each resulting token is passed through
+ * pkgconf_fragment_add so that variable references are expanded.  When it is
+ * false, `value` is assumed to already be fully expanded and the tokens are
+ * inserted verbatim: this is the path used to re-split a single variable whose
+ * value expands to several fragments, and it must not evaluate again lest an
+ * expansion that yields a literal "${...}" (via a "$$" escape) recurse forever.
+ */
+static bool
+fragment_split(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_list_t *vars, const char *value, unsigned int flags, bool evaluate)
+{
+	int i, ret, argc;
+	char **argv;
+
+	ret = pkgconf_argv_split(value, &argc, &argv);
+	if (ret < 0)
+	{
+		PKGCONF_TRACE(client, "unable to parse fragment string [%s]", value);
+		return false;
+	}
+
+	for (i = 0; i < argc; i++)
+	{
+		const char *token;
+		pkgconf_buffer_t greedybuf = PKGCONF_BUFFER_INITIALIZER;
+		bool ok;
+
+		if (argv[i] == NULL)
+		{
+			PKGCONF_TRACE(client, "parsed fragment string is inconsistent: argc = %d while argv[%d] == NULL", argc, i);
+			pkgconf_argv_free(argv);
+			return false;
+		}
+
+		token = argv[i];
+
+		PKGCONF_TRACE(client, "processing [%s]", argv[i]);
+
+		if (pkgconf_fragment_is_greedy(argv[i]) && i + 1 < argc)
+		{
+			if (!pkgconf_buffer_append(&greedybuf, argv[i]) ||
+				!pkgconf_buffer_append(&greedybuf, argv[i + 1]))
+			{
+				pkgconf_buffer_finalize(&greedybuf);
+				pkgconf_argv_free(argv);
+				return false;
+			}
+
+			token = pkgconf_buffer_str(&greedybuf);
+
+			/* skip over next arg as we combined them */
+			i++;
+		}
+
+		if (evaluate)
+			ok = pkgconf_fragment_add(client, list, vars, token, flags);
+		else
+			ok = fragment_insert_evaluated(client, list, token, false, flags);
+
+		pkgconf_buffer_finalize(&greedybuf);
+
+		if (!ok)
+		{
+			pkgconf_argv_free(argv);
+			return false;
+		}
+	}
+
+	pkgconf_argv_free(argv);
+
+	return true;
+}
+
+/*
+ * !doc
+ *
+ * .. c:function:: bool pkgconf_fragment_add(const pkgconf_client_t *client, pkgconf_list_t *list, const char *string, unsigned int flags)
+ *
+ *    Adds a `fragment` of text to a `fragment list`, possibly modifying the fragment if a sysroot is set.
+ *
+ *    :param pkgconf_client_t* client: The pkgconf client being accessed.
+ *    :param pkgconf_list_t* list: The fragment list.
+ *    :param char* string: The string of text to add as a fragment to the fragment list.
+ *    :param uint flags: Parsing-related flags for the package.
+ *    :return: true on success, false on parse error or allocation failure
+ */
+bool
+pkgconf_fragment_add(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_list_t *vars, const char *value, unsigned int flags)
+{
+	pkgconf_buffer_t evalbuf = PKGCONF_BUFFER_INITIALIZER;
+	bool saw_sysroot = false;
+	char *string;
+	bool ret;
+
+	if (!pkgconf_bytecode_eval_str_to_buf(client, vars, value, &saw_sysroot, &evalbuf))
+	{
+		pkgconf_buffer_finalize(&evalbuf);
+		return false;
+	}
+
+	if (pkgconf_buffer_len(&evalbuf) == 0)
+	{
+		pkgconf_buffer_finalize(&evalbuf);
+		return true;
+	}
+
+	string = pkgconf_buffer_freeze(&evalbuf);
+	if (string == NULL)
+		return false;
+
+	/* A bare "${var}" may expand to several whitespace-separated fragments, so
+	 * re-split the (already-expanded) result.  The split must not evaluate the
+	 * tokens again, otherwise a value that expands to a literal "${var}" would
+	 * recurse without bound.
+	 */
+	if (fragment_is_unquoted_var(value))
+		ret = fragment_split(client, list, vars, string, flags, false);
+	else
+		ret = fragment_insert_evaluated(client, list, string, saw_sysroot, flags);
+
+	free(string);
+	return ret;
 }
 
 static inline pkgconf_fragment_t *
@@ -498,6 +578,99 @@ pkgconf_fragment_lookup(pkgconf_list_t *list, const pkgconf_fragment_t *base)
 	}
 
 	return NULL;
+}
+
+/* Order fragments by (type, data) so that the cursor index can be searched
+ * with bsearch().  NULL data sorts before any non-NULL data of the same type. */
+static int
+fragment_index_cmp(const void *a, const void *b)
+{
+	const pkgconf_fragment_t *fa = *(pkgconf_fragment_t * const *) a;
+	const pkgconf_fragment_t *fb = *(pkgconf_fragment_t * const *) b;
+
+	if (fa->type != fb->type)
+		return (unsigned char) fa->type < (unsigned char) fb->type ? -1 : 1;
+
+	if (fa->data == NULL || fb->data == NULL)
+	{
+		if (fa->data == fb->data)
+			return 0;
+
+		return fa->data == NULL ? -1 : 1;
+	}
+
+	return strcmp(fa->data, fb->data);
+}
+
+static pkgconf_fragment_t *
+fragment_index_lookup(const pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base)
+{
+	pkgconf_fragment_t **found;
+
+	if (cursor->count == 0)
+		return NULL;
+
+	found = bsearch(&base, cursor->index, cursor->count, sizeof(void *), fragment_index_cmp);
+	return found != NULL ? *found : NULL;
+}
+
+static bool
+fragment_index_insert(pkgconf_fragment_cursor_t *cursor, pkgconf_fragment_t *frag)
+{
+	size_t lo = 0, hi = cursor->count;
+
+	if (cursor->count == cursor->alloc)
+	{
+		size_t newalloc = cursor->alloc != 0 ? cursor->alloc * 2 : 16;
+		pkgconf_fragment_t **newindex = pkgconf_reallocarray(cursor->index, newalloc, sizeof(void *));
+
+		if (newindex == NULL)
+			return false;
+
+		cursor->index = newindex;
+		cursor->alloc = newalloc;
+	}
+
+	while (lo < hi)
+	{
+		size_t mid = lo + (hi - lo) / 2;
+
+		if (fragment_index_cmp(&cursor->index[mid], &frag) < 0)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+
+	memmove(&cursor->index[lo + 1], &cursor->index[lo], (cursor->count - lo) * sizeof(void *));
+	cursor->index[lo] = frag;
+	cursor->count++;
+
+	return true;
+}
+
+static void
+fragment_index_remove(pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *frag)
+{
+	pkgconf_fragment_t **found = bsearch(&frag, cursor->index, cursor->count, sizeof(void *), fragment_index_cmp);
+	size_t idx;
+
+	if (found == NULL)
+		return;
+
+	idx = (size_t) (found - cursor->index);
+	memmove(&cursor->index[idx], &cursor->index[idx + 1], (cursor->count - idx - 1) * sizeof(void *));
+	cursor->count--;
+}
+
+/* Look up an existing fragment matching `base`: via the cursor's sorted index
+ * when one is provided, otherwise a linear scan of the list. */
+static inline pkgconf_fragment_t *
+fragment_lookup(pkgconf_list_t *list, const pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base)
+{
+	if (cursor != NULL)
+		return fragment_index_lookup(cursor, base);
+
+	return pkgconf_fragment_lookup(list, base);
 }
 
 static inline bool
@@ -541,7 +714,7 @@ pkgconf_fragment_can_merge(const pkgconf_fragment_t *base, unsigned int flags, b
 }
 
 static inline pkgconf_fragment_t *
-pkgconf_fragment_exists(pkgconf_list_t *list, const pkgconf_fragment_t *base, unsigned int flags, bool is_private)
+pkgconf_fragment_exists(pkgconf_list_t *list, const pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base, unsigned int flags, bool is_private)
 {
 	if (!pkgconf_fragment_can_merge_back(base, flags, is_private))
 		return NULL;
@@ -549,7 +722,7 @@ pkgconf_fragment_exists(pkgconf_list_t *list, const pkgconf_fragment_t *base, un
 	if (!pkgconf_fragment_can_merge(base, flags, is_private))
 		return NULL;
 
-	return pkgconf_fragment_lookup(list, base);
+	return fragment_lookup(list, cursor, base);
 }
 
 static inline bool
@@ -611,7 +784,7 @@ pkgconf_fragment_has_system_dir(const pkgconf_client_t *client, const pkgconf_fr
 }
 
 static bool
-pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list, const pkgconf_fragment_t *base, bool is_private);
+pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base, bool is_private);
 
 static bool
 pkgconf_fragment_copy_list_node(const pkgconf_client_t *client, pkgconf_list_t *list, const pkgconf_list_t *base)
@@ -622,7 +795,9 @@ pkgconf_fragment_copy_list_node(const pkgconf_client_t *client, pkgconf_list_t *
 	{
 		pkgconf_fragment_t *frag = node->data;
 
-		if (!pkgconf_fragment_copy_node(client, list, frag, true))
+		/* children are copied into their own (small) list, which is never
+		 * indexed, so no cursor is threaded down here. */
+		if (!pkgconf_fragment_copy_node(client, list, NULL, frag, true))
 			return false;
 	}
 
@@ -630,17 +805,17 @@ pkgconf_fragment_copy_list_node(const pkgconf_client_t *client, pkgconf_list_t *
 }
 
 static bool
-pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list, const pkgconf_fragment_t *base, bool is_private)
+pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base, bool is_private)
 {
 	pkgconf_fragment_t *old_frag = NULL;
 	pkgconf_fragment_t *frag;
 
-	if ((old_frag = pkgconf_fragment_exists(list, base, client->flags, is_private)) != NULL)
+	if ((old_frag = pkgconf_fragment_exists(list, cursor, base, client->flags, is_private)) != NULL)
 	{
 		if (!pkgconf_fragment_should_merge(old_frag))
 			old_frag = NULL;
 	}
-	else if (!is_private && !pkgconf_fragment_can_merge_back(base, client->flags, is_private) && (pkgconf_fragment_lookup(list, base) != NULL))
+	else if (!is_private && !pkgconf_fragment_can_merge_back(base, client->flags, is_private) && (fragment_lookup(list, cursor, base) != NULL))
 		return true;
 
 	frag = calloc(1, sizeof(pkgconf_fragment_t));
@@ -667,9 +842,18 @@ pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list,
 	}
 
 	if (old_frag != NULL)
+	{
+		if (cursor != NULL)
+			fragment_index_remove(cursor, old_frag);
+
 		pkgconf_fragment_delete(list, old_frag);
+	}
 
 	pkgconf_node_insert_tail(&frag->iter, frag, list);
+
+	if (cursor != NULL && !fragment_index_insert(cursor, frag))
+		return false;
+
 	return true;
 }
 
@@ -690,7 +874,76 @@ pkgconf_fragment_copy_node(const pkgconf_client_t *client, pkgconf_list_t *list,
 void
 pkgconf_fragment_copy(const pkgconf_client_t *client, pkgconf_list_t *list, const pkgconf_fragment_t *base, bool is_private)
 {
-	(void) pkgconf_fragment_copy_node(client, list, base, is_private);
+	(void) pkgconf_fragment_copy_node(client, list, NULL, base, is_private);
+}
+
+/*
+ * !doc
+ *
+ * .. c:function:: void pkgconf_fragment_cursor_init(pkgconf_fragment_cursor_t *cursor, pkgconf_list_t *list)
+ *
+ *    Initialises a `fragment cursor` bound to a (typically empty) destination list.  While the
+ *    cursor is in use, fragments must be added to the list only via ``pkgconf_fragment_copy_cursor()``
+ *    so that the cursor's index stays in sync.
+ *
+ *    :param pkgconf_fragment_cursor_t* cursor: The cursor to initialise.
+ *    :param pkgconf_list_t* list: The destination fragment list.
+ *    :return: nothing
+ */
+void
+pkgconf_fragment_cursor_init(pkgconf_fragment_cursor_t *cursor, pkgconf_list_t *list)
+{
+	pkgconf_node_t *node;
+
+	cursor->list = list;
+	cursor->index = NULL;
+	cursor->count = 0;
+	cursor->alloc = 0;
+
+	/* seed the index with anything already present, so dedup against pre-existing
+	 * fragments behaves exactly as the linear scan would. */
+	PKGCONF_FOREACH_LIST_ENTRY(list->head, node)
+		(void) fragment_index_insert(cursor, node->data);
+}
+
+/*
+ * !doc
+ *
+ * .. c:function:: void pkgconf_fragment_cursor_deinit(pkgconf_fragment_cursor_t *cursor)
+ *
+ *    Releases the index held by a `fragment cursor`.  The destination list and its fragments are
+ *    not affected.
+ *
+ *    :param pkgconf_fragment_cursor_t* cursor: The cursor to release.
+ *    :return: nothing
+ */
+void
+pkgconf_fragment_cursor_deinit(pkgconf_fragment_cursor_t *cursor)
+{
+	free(cursor->index);
+	cursor->index = NULL;
+	cursor->count = 0;
+	cursor->alloc = 0;
+}
+
+/*
+ * !doc
+ *
+ * .. c:function:: void pkgconf_fragment_copy_cursor(const pkgconf_client_t *client, pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base, bool is_private)
+ *
+ *    Like ``pkgconf_fragment_copy()``, but uses the cursor's sorted index for the mergeback lookup,
+ *    turning what would be a linear scan of the destination list into a bsearch.
+ *
+ *    :param pkgconf_client_t* client: The pkgconf client being accessed.
+ *    :param pkgconf_fragment_cursor_t* cursor: The cursor bound to the destination list.
+ *    :param pkgconf_fragment_t* base: The fragment being copied.
+ *    :param bool is_private: Whether the fragment list is a `private` fragment list (static linking).
+ *    :return: nothing
+ */
+void
+pkgconf_fragment_copy_cursor(const pkgconf_client_t *client, pkgconf_fragment_cursor_t *cursor, const pkgconf_fragment_t *base, bool is_private)
+{
+	(void) pkgconf_fragment_copy_node(client, cursor->list, cursor, base, is_private);
 }
 
 /*
@@ -736,7 +989,7 @@ pkgconf_fragment_filter(const pkgconf_client_t *client, pkgconf_list_t *dest, pk
 		pkgconf_fragment_t *frag = node->data;
 
 		if (filter_func(client, frag, data))
-			(void) pkgconf_fragment_copy_node(client, dest, frag, true);
+			(void) pkgconf_fragment_copy_node(client, dest, NULL, frag, true);
 	}
 }
 
@@ -842,7 +1095,8 @@ fragment_render(const pkgconf_fragment_render_ctx_t *ctx, const pkgconf_fragment
 	if (!fragment_quote(&quoted, frag))
 		goto fail;
 
-	if (frag->type && !pkgconf_buffer_append_fmt(buf, "-%c", frag->type))
+	if (frag->type &&
+		(!pkgconf_buffer_push_byte(buf, '-') || !pkgconf_buffer_push_byte(buf, frag->type)))
 		goto fail;
 
 	if (!pkgconf_buffer_append(buf, pkgconf_buffer_str_or_empty(&quoted)))
@@ -973,60 +1227,5 @@ pkgconf_fragment_free(pkgconf_list_t *list)
 bool
 pkgconf_fragment_parse(pkgconf_client_t *client, pkgconf_list_t *list, pkgconf_list_t *vars, const char *value, unsigned int flags)
 {
-	int i, ret, argc;
-	char **argv;
-
-	ret = pkgconf_argv_split(value, &argc, &argv);
-	if (ret < 0)
-	{
-		PKGCONF_TRACE(client, "unable to parse fragment string [%s]", value);
-		return false;
-	}
-
-	for (i = 0; i < argc; i++)
-	{
-		if (argv[i] == NULL)
-		{
-			PKGCONF_TRACE(client, "parsed fragment string is inconsistent: argc = %d while argv[%d] == NULL", argc, i);
-			pkgconf_argv_free(argv);
-			return false;
-		}
-
-		bool greedy = pkgconf_fragment_is_greedy(argv[i]);
-
-		PKGCONF_TRACE(client, "processing [%s] greedy=%d", argv[i], greedy);
-
-		if (greedy && i + 1 < argc)
-		{
-			pkgconf_buffer_t greedybuf = PKGCONF_BUFFER_INITIALIZER;
-
-			if (!pkgconf_buffer_append(&greedybuf, argv[i]) ||
-				!pkgconf_buffer_append(&greedybuf, argv[i + 1]))
-			{
-				pkgconf_buffer_finalize(&greedybuf);
-				pkgconf_argv_free(argv);
-				return false;
-			}
-
-			bool added = pkgconf_fragment_add(client, list, vars, pkgconf_buffer_str(&greedybuf), flags);
-			pkgconf_buffer_finalize(&greedybuf);
-			if (!added)
-			{
-				pkgconf_argv_free(argv);
-				return false;
-			}
-
-			/* skip over next arg as we combined them */
-			i++;
-		}
-		else if (!pkgconf_fragment_add(client, list, vars, argv[i], flags))
-		{
-			pkgconf_argv_free(argv);
-			return false;
-		}
-	}
-
-	pkgconf_argv_free(argv);
-
-	return true;
+	return fragment_split(client, list, vars, value, flags, true);
 }
