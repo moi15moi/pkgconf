@@ -6,7 +6,14 @@ on:
 
 jobs:
   cmake-tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
     steps:
       - name: Checkout pkgconf
         uses: actions/checkout@v7
@@ -19,11 +26,25 @@ jobs:
           repository: Kitware/CMake
           path: cmake
 
-      - name: Install build tools
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build meson \
               libglib2.0-dev pkg-config libssl-dev elfutils
+
+      - name: Install MSYS2
+        uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: >-
+            base-devel
+            git
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-toolchain
 
       - name: Configure pkgconf
         working-directory: pkgconf
@@ -32,13 +53,27 @@ jobs:
           pc_system_libdirs="$(pkg-config --variable=pc_system_libdirs pkg-config)"
           pc_system_includedirs="$(pkg-config --variable=pc_system_includedirs pkg-config)"
 
-          meson setup _build --prefix="$HOME/.local" --libdir=lib \
+          # on MSYS2, /mingw64 is already on PATH, so there's no need for a
+          # separate user prefix like on Linux
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            prefix=/mingw64
+          else
+            prefix="$HOME/.local"
+          fi
+
+          meson setup _build --prefix="$prefix" --libdir=lib \
               -Dwith-pkg-config-dir="$pkg_config_path" -Dwith-system-libdir="$pc_system_libdirs" \
               -Dwith-system-includedir="$pc_system_includedirs"
 
       # use dpkg directly so that we do not remove glib-2.0 module with pkg-config
-      - name: Uninstall preinstalled pkgconf
+      - name: Uninstall preinstalled pkgconf (Linux)
+        if: runner.os == 'Linux'
         run: sudo dpkg --remove --force-depends pkg-config pkgconf pkgconf-bin
+
+      # skip dependency checks so we do not remove the mingw-w64-x86_64-glib2 package
+      - name: Uninstall preinstalled pkgconf (Windows)
+        if: runner.os == 'Windows'
+        run: pacman -Rdd --noconfirm mingw-w64-x86_64-pkgconf
 
       - name: Verify preinstalled pkgconf is uninstalled
         run: |
@@ -59,13 +94,19 @@ jobs:
         working-directory: pkgconf
         run: meson install -C _build
 
-      - name: Add pkgconf to PATH
+      - name: Add pkgconf to PATH (Linux)
+        if: runner.os == 'Linux'
         run: |
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/.local/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: Symlink pkg-config to pkgconf
-        run: ln -s "$HOME/.local/bin/pkgconf" "$HOME/.local/bin/pkg-config"
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "/mingw64/bin/pkgconf.exe" "/mingw64/bin/pkg-config.exe"
+          else
+            ln -s "$HOME/.local/bin/pkgconf" "$HOME/.local/bin/pkg-config"
+          fi
 
       - name: Print pkgconf environment
         run: pkg-config --dump-personality
