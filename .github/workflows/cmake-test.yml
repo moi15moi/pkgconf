@@ -70,12 +70,14 @@ jobs:
       - name: Print pkgconf environment
         run: pkg-config --dump-personality
 
+      # Build outside the CMake checkout: CMake's own CheckSourceTree test
+      # runs `git status` on the source tree and fails if anything (like a
+      # nested build dir) shows up as untracked.
       - name: Build CMake
-        working-directory: cmake
         run: |
-          cmake -S . -B _build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-          cmake --build _build --parallel "$(nproc)"
+          cmake -S cmake -B cmake_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build cmake_build --parallel "$(nproc)"
 
       - name: Run CMake test suite
-        working-directory: cmake/_build
+        working-directory: cmake_build
         run: ./bin/ctest --output-on-failure --parallel "$(nproc)"
