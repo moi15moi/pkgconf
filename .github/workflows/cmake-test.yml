@@ -22,7 +22,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ninja-build cmake meson \
+          sudo apt-get install -y build-essential ninja-build meson \
               libglib2.0-dev pkg-config libssl-dev elfutils
 
       - name: Configure pkgconf
@@ -70,13 +70,12 @@ jobs:
       - name: Print pkgconf environment
         run: pkg-config --dump-personality
 
-      # Build outside the CMake checkout: CMake's own CheckSourceTree test
-      # runs `git status` on the source tree and fails if anything (like a
-      # nested build dir) shows up as untracked.
       - name: Build CMake
         run: |
-          cmake -S cmake -B cmake_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-          cmake --build cmake_build --parallel "$(nproc)"
+          mkdir cmake_build
+          cd cmake_build
+          ../cmake/bootstrap --parallel="$(nproc)" -- -DBUILD_TESTING=ON
+          make -j "$(nproc)"
 
       - name: Run CMake test suite
         working-directory: cmake_build
