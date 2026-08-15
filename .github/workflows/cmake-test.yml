@@ -71,12 +71,13 @@ jobs:
         run: pkg-config --dump-personality
 
       - name: Build CMake
+        working-directory: cmake
         run: |
-          mkdir cmake_build
-          cd cmake_build
-          ../cmake/bootstrap --parallel="$(nproc)" -- -DBUILD_TESTING=ON
+          mkdir build
+          cd build
+          ../bootstrap --parallel="$(nproc)" -- -DBUILD_TESTING=ON
           make -j "$(nproc)"
 
       - name: Run CMake test suite
-        working-directory: cmake_build
+        working-directory: cmake/build
         run: ./bin/ctest --output-on-failure --parallel "$(nproc)"
