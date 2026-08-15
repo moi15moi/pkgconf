@@ -1,0 +1,87 @@
+name: cmake tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cmake-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pkgconf
+        uses: actions/checkout@v7
+        with:
+          path: pkgconf
+
+      - name: Checkout CMake
+        uses: actions/checkout@v7
+        with:
+          repository: Kitware/CMake
+          path: cmake
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ninja-build
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ninja-build cmake meson \
+              libglib2.0-dev pkg-config libssl-dev
+
+      - name: Configure pkgconf
+        working-directory: pkgconf
+        run: |
+          pkg_config_path="$(pkg-config --variable=pc_path pkg-config)"
+          pc_system_libdirs="$(pkg-config --variable=pc_system_libdirs pkg-config)"
+          pc_system_includedirs="$(pkg-config --variable=pc_system_includedirs pkg-config)"
+
+          meson setup _build --prefix="$HOME/.local" --libdir=lib \
+              -Dwith-pkg-config-dir="$pkg_config_path" -Dwith-system-libdir="$pc_system_libdirs" \
+              -Dwith-system-includedir="$pc_system_includedirs"
+
+      # use dpkg directly so that we do not remove glib-2.0 module with pkg-config
+      - name: Uninstall preinstalled pkgconf
+        run: sudo dpkg --remove --force-depends pkg-config pkgconf pkgconf-bin
+
+      - name: Verify preinstalled pkgconf is uninstalled
+        run: |
+          found=0
+          for name in pkg-config pkgconf; do
+            path="$(command -v "$name" 2>/dev/null || true)"
+            if [ -n "$path" ]; then
+              echo "$name is still installed at: $path" >&2
+              ls -la "$path" >&2 || true
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Install pkgconf
+        working-directory: pkgconf
+        run: meson install -C _build
+
+      - name: Add pkgconf to PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$HOME/.local/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Symlink pkg-config to pkgconf
+        run: ln -s "$HOME/.local/bin/pkgconf" "$HOME/.local/bin/pkg-config"
+
+      - name: Print pkgconf environment
+        run: pkg-config --dump-personality
+
+      - name: Build CMake
+        working-directory: cmake
+        run: |
+          cmake -S . -B _build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build _build --parallel "$(nproc)"
+
+      - name: Run CMake test suite
+        working-directory: cmake/_build
+        run: ./bin/ctest --output-on-failure --parallel "$(nproc)"
