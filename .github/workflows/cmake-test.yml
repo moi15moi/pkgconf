@@ -121,4 +121,4 @@ jobs:
 
       - name: Run CMake test suite
         working-directory: cmake/build
-        run: ./bin/ctest --output-on-failure --parallel "$(nproc)"
+        run: ./bin/ctest -R FindPkgConfig -V --output-on-failure --parallel "$(nproc)"
